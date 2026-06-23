@@ -23,7 +23,9 @@
 | Кэш/сессии | Redis | FSM-хранилище aiogram + горячий кэш (рычаг скорости) |
 | Напоминания | APScheduler | Утренний план, вечерний прогресс |
 | Миграции | Alembic | Версионирование схемы |
+| Доменные схемы | Pydantic v2 | Строгая типизация объектов, сериализация в JSONB |
 | Конфиг | pydantic-settings | Env-переменные, типобезопасно |
+| ИИ-провайдер | Codex CLI (OAuth) | Вызов `codex` через подписку, без API-ключа (см. §6) |
 | Инфра | Docker Compose | app + postgres + redis одной командой |
 | Тесты | pytest + pytest-asyncio | TDD |
 
@@ -59,13 +61,15 @@ bukafit/
     keyboards.py        #   inline-клавиатуры
     middleware.py       #   загрузка пользователя, сессия БД
   core/                 # ДОМЕН — без telegram, без AI
-    models/             #   SQLAlchemy: User, Profile, Program, WorkoutLog, Summary
+    schemas.py          #   Pydantic-модели: ProfileData, ProgramData, LogData, ...
+    models/             #   SQLAlchemy-таблицы: User, Profile, Program, WorkoutLog, Summary
     progression.py      #   следующий вес/повторы из прошлого лога
     schedule.py         #   какая тренировка сегодня
     streaks.py          #   подсчёт серий
   ai/                   # СЛОЙ МОДЕЛЕЙ — провайдер меняется через конфиг
     provider.py         #   Protocol: generate_plan() / answer_question()
-    mock.py             #   MockProvider — детерминированный фейк (СТАРТ ОТСЮДА)
+    mock.py             #   MockProvider — детерминированный фейк (для тестов/офлайн)
+    codex.py            #   CodexProvider — вызов codex CLI через OAuth (СТАРТ ОТСЮДА)
     prompts.py          #   персона, запрет клише, дисклеймеры
     memory.py           #   компактная память: профиль + состояние + резюме
   db/
@@ -91,7 +95,7 @@ tests/
 - **User** — `tg_id`, `created_at`, статус доступа.
 - **Profile** (статичный) — цель (масса/сушка/здоровье), уровень, инвентарь
   (зал/дом), график (дни), травмы/ограничения, предпочтения. Маленький структ.
-- **Program** — текущая недельная программа. JSON: дни → упражнения (название,
+- **Program** — текущая недельная программа: дни → упражнения (название,
   целевые подходы/повторы/вес, замены).
 - **WorkoutLog** — по упражнению: вес, повторы, RPE (ощущение нагрузки),
   сделал/пропустил, timestamp.
@@ -100,23 +104,83 @@ tests/
 
 Зачем: маленький контекст = быстрее, дешевле, без «забывания» важного.
 
+### 5.1. Стратегия хранения — JSONB + Pydantic (гибрид)
+
+Содержимое доменных объектов храним в Postgres **JSONB**, но не как «сырую
+строку»: структура задаётся **Pydantic-моделями** в `core/schemas.py`
+(`ProfileData`, `ProgramData`, `LogData`, …). Запись в БД — `model_dump()`,
+чтение — `model_validate()`. Это «нормальная структуризация»: типы, валидация,
+дефолты, версия схемы — на уровне Pydantic, а БД хранит компактный JSONB.
+
+Гибрид: поля, нужные для **запросов и индексов**, выносим в отдельные колонки;
+остальное — в JSONB-payload.
+
+| Таблица | Колонки (реляционные, индекс) | JSONB `data` |
+|---------|-------------------------------|--------------|
+| `users` | `id`, `tg_id`(uniq), `created_at`, `access_status` | — |
+| `profiles` | `id`, `user_id`(FK, uniq) | `ProfileData` |
+| `programs` | `id`, `user_id`(FK), `is_active`, `created_at` | `ProgramData` |
+| `workout_logs` | `id`, `user_id`(FK), `exercise_key`(idx), `created_at`(idx), `done` | `LogData` (вес, повторы, RPE, заметки) |
+| `summaries` | `id`, `user_id`(FK, uniq), `updated_at` | `SummaryData` |
+
+Почему гибрид, а не чистый JSONB: `progression` берёт «последний лог по
+упражнению» — это запрос по `user_id + exercise_key ORDER BY created_at`, ему
+нужны индексируемые колонки. Профиль/программа целиком читаются объектом — им
+хватает JSONB. Почему не полностью реляционно: цель доку §7.3 — компактные
+структурированные объекты, а не размазанная на 20 таблиц схема; на масштабе
+100–200 юзеров JSONB+Pydantic проще и гибче к изменениям схемы.
+
 ---
 
 ## 6. Слой моделей (AI)
 
 ```python
 class ModelProvider(Protocol):
-    async def generate_plan(self, profile: Profile) -> Program: ...
+    async def generate_plan(self, profile: ProfileData) -> ProgramData: ...
     async def answer_question(self, question: str, memory: Memory) -> str: ...
     # async def analyze_food(self, image: bytes) -> FoodInfo: ...  # v2
 ```
 
-- **MockProvider** — старт. Возвращает осмысленный, но захардкоженный план и
-  ответы. Скелет полностью работает без API-ключей.
-- **GeminiProvider / ClaudeProvider** — позже, тот же Protocol. Выбор через
+Провайдеры:
+
+- **CodexProvider** — **основной сейчас**. Вместо HTTP-API вызывает локальный
+  `codex` CLI как подпроцесс. Аутентификация — **OAuth (ChatGPT-логин)**: один
+  раз `codex login` на хосте, API-ключ в приложении не нужен.
+- **MockProvider** — детерминированный фейк для тестов и офлайн-разработки.
+  Скелет полностью работает без сети.
+- **GeminiProvider / ClaudeProvider** — позже, тот же Protocol, выбор через
   `config.AI_PROVIDER`. Логика бота не меняется.
-- **«Живость» — это промпт, не модель** (BukaFit.md §8). Персона, список
-  запрещённых клише, примеры тона, умеренная температура — в `prompts.py`.
+
+**«Живость» — это промпт, не модель** (BukaFit.md §8). Персона, список
+запрещённых клише, примеры тона — в `prompts.py`.
+
+### 6.1. CodexProvider — механизм
+
+- **Вызов:** неинтерактивный режим `codex exec` (или эквивалент), prompt через
+  stdin/аргумент, ответ — из stdout. Запуск через `asyncio.create_subprocess_exec`
+  (не блокирует event loop), таймаут.
+- **generate_plan:** промпт требует ответ строго в JSON по схеме `ProgramData`;
+  парсим stdout → `ProgramData.model_validate_json()`. При ошибке парсинга —
+  один ретрай, затем fallback на MockProvider.
+- **answer_question:** свободный текст + дисклеймер.
+- **Конфиг:** `AI_PROVIDER=codex`, `CODEX_BIN` (путь к бинарю), `CODEX_TIMEOUT`,
+  доп. флаги. OAuth-сессия живёт на хосте вне приложения.
+- **Предусловие:** на хосте установлен `codex` (на момент написания спеки —
+  `codex not found`) и выполнен `codex login`. Пока этого нет — работаем с
+  `AI_PROVIDER=mock`; код `CodexProvider` пишем сразу, включаем флагом.
+- **Изоляция в Docker:** бинарь `codex` и каталог OAuth-сессии (`~/.codex` или
+  аналог) монтируются в контейнер; либо провайдер ходит на хост. Деталь решаем
+  на этапе плана.
+
+### 6.2. Известные компромиссы (осознанно, «пока что»)
+
+- **Задержка** выше, чем у API (старт подпроцесса). Док просит низкую задержку —
+  принимаем как временную плату за работу через подписку без ключа.
+- **Стриминг** ограничен: индикатор «печатает…» работает всегда; потоковая
+  отдача — если CLI её отдаёт инкрементально, иначе ответ целиком.
+- **Стабильность:** OAuth-сессия может истечь (нужен повторный `codex login`);
+  CLI — не серверный API. Поэтому слой моделей оставляет лёгкий переход на
+  API-провайдеры (Gemini/Claude) без переписывания логики.
 
 ---
 
@@ -181,8 +245,8 @@ class ModelProvider(Protocol):
 
 Не делаем в v1: мобильное приложение, носимые устройства, видеоразбор,
 авто-перестройка всей программы, полноценный модуль питания с калориями по фото,
-биллинг-логику, реферальную механику. Реальные провайдеры Gemini/Claude
-подключаются после готового скелета.
+биллинг-логику, реферальную механику. ИИ работает через CodexProvider (OAuth);
+API-провайдеры Gemini/Claude — после пилота, через тот же слой моделей.
 
 ---
 
