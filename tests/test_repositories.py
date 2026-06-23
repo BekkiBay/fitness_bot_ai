@@ -1,8 +1,7 @@
-import pytest
 
 from bukafit.core.schemas import (
     Goal, Level, Inventory, ProfileData,
-    ProgramData, DayPlan, ExercisePlan, LogData,
+    ProgramData, LogData,
 )
 from bukafit.db import repositories as repo
 

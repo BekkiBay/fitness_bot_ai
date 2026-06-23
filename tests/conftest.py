@@ -1,7 +1,7 @@
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bukafit.db.session import engine, SessionMaker
+from bukafit.db.session import engine
 
 
 @pytest_asyncio.fixture
