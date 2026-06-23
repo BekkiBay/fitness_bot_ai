@@ -34,6 +34,10 @@ async def run_polling() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = build_dispatcher()
+
+    from bukafit.reminders.scheduler import start_scheduler
+    start_scheduler(bot)
+
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
