@@ -1,6 +1,8 @@
 import asyncio
 import json
+import os
 import re
+import tempfile
 
 from bukafit.ai import prompts
 from bukafit.ai.mock import MockProvider
@@ -34,22 +36,41 @@ class CodexProvider:
         self._fallback = MockProvider()
 
     async def _run(self, prompt: str) -> str:
-        proc = await asyncio.create_subprocess_exec(
-            self.bin, "exec", "-",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        # codex exec — агент; чистый финальный ответ берём из файла -o,
+        # stdout у него засорён служебными строками. read-only sandbox: только текст.
+        fd, out_path = tempfile.mkstemp(prefix="codex_", suffix=".txt")
+        os.close(fd)
         try:
-            out, err = await asyncio.wait_for(
-                proc.communicate(prompt.encode()), timeout=self.timeout
+            proc = await asyncio.create_subprocess_exec(
+                self.bin, "exec",
+                "--sandbox", "read-only",
+                "--skip-git-repo-check",
+                "--ephemeral",
+                "-o", out_path,
+                "-",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise RuntimeError("codex CLI timeout")
-        if proc.returncode != 0:
-            raise RuntimeError(f"codex CLI error: {err.decode(errors='ignore')[:300]}")
-        return out.decode(errors="ignore")
+            try:
+                _, err = await asyncio.wait_for(
+                    proc.communicate(prompt.encode()), timeout=self.timeout
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                raise RuntimeError("codex CLI timeout")
+            if proc.returncode != 0:
+                raise RuntimeError(f"codex CLI error: {err.decode(errors='ignore')[:300]}")
+            with open(out_path, encoding="utf-8") as f:
+                content = f.read().strip()
+            if not content:
+                raise RuntimeError("codex CLI returned empty output")
+            return content
+        finally:
+            try:
+                os.unlink(out_path)
+            except OSError:
+                pass
 
     async def generate_plan(self, profile: ProfileData) -> ProgramData:
         try:
