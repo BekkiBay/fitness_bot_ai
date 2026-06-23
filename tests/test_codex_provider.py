@@ -1,4 +1,3 @@
-import pytest
 
 from bukafit.ai.codex import CodexProvider, extract_json
 from bukafit.ai.provider import Memory
