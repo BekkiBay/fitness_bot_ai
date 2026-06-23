@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     # Хранилища
     database_url: str = "postgresql+asyncpg://bukafit:bukafit@localhost:5432/bukafit"
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = "redis://localhost:6380/0"
 
     # ИИ-провайдер
     ai_provider: str = "mock"  # mock | codex
