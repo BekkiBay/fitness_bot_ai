@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -8,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bukafit.bot.handlers.onboarding import start_onboarding
+from bukafit.core.clock import to_local_date, today_local
 from bukafit.core.models import User, WorkoutLog
 from bukafit.core.streaks import current_streak
 from bukafit.db import repositories as repo
@@ -52,8 +51,8 @@ async def cmd_progress(message: Message, session: AsyncSession, user: User):
             WorkoutLog.user_id == user.id, WorkoutLog.done.is_(True)
         )
     )
-    dates = [d.astimezone(timezone.utc).date() for d in rows.all()]
-    streak = current_streak(dates, today=datetime.now(timezone.utc).date())
+    dates = [to_local_date(d) for d in rows.all()]
+    streak = current_streak(dates, today=today_local())
     await message.answer(
         f"📊 Твой прогресс:\n"
         f"• Тренировок за неделю: {week}\n"

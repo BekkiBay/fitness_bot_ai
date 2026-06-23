@@ -39,10 +39,13 @@ async def test_generate_plan_fallback_on_garbage(monkeypatch):
     assert {d.weekday for d in out.days} == {1, 5}
 
 
-async def test_answer_question_passthrough(monkeypatch):
+async def test_answer_question_appends_disclaimer(monkeypatch):
+    from bukafit.ai import prompts
+
     async def fake_run(self, prompt: str) -> str:
         return "  делай так и так  "
 
     monkeypatch.setattr(CodexProvider, "_run", fake_run)
     ans = await CodexProvider().answer_question("вопрос", Memory())
-    assert ans == "делай так и так"
+    assert ans.startswith("делай так и так")
+    assert prompts.DISCLAIMER in ans

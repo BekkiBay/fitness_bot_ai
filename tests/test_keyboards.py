@@ -22,7 +22,8 @@ def test_days_kb_marks_selected():
 
 
 def test_log_kb_for_exercise():
-    markup = kb.log_kb("squat")
+    markup = kb.log_kb("squat", 40.0)
     cbs = [b.callback_data for row in markup.inline_keyboard for b in row]
-    assert "log:squat:done" in cbs
-    assert "log:squat:skip" in cbs
+    assert any(c.startswith("log:squat:done:") for c in cbs)
+    assert any(c.startswith("log:squat:skip:") for c in cbs)
+    assert "log:squat:wup:40.0" in cbs

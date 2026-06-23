@@ -1,11 +1,10 @@
-from datetime import datetime, timezone
-
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bukafit.bot import keyboards as kb
+from bukafit.core.clock import weekday_local
 from bukafit.core.models import User
 from bukafit.core.progression import suggest
 from bukafit.core.schedule import next_workout, workout_for_today
@@ -15,19 +14,19 @@ from bukafit.db import repositories as repo
 router = Router()
 
 
-def _today_weekday() -> int:
-    return datetime.now(timezone.utc).isoweekday()  # Пн=1..Вс=7
+def _fmt_w(weight: float | None) -> str:
+    return f"{weight} кг" if weight is not None else "свой вес"
 
 
-async def _exercise_card(session: AsyncSession, user_id: int, ex) -> str:
+async def _card_and_kb(session: AsyncSession, user_id: int, ex):
     last = await repo.last_log(session, user_id, ex.key)
     s = suggest(last, ex)
-    weight = f"{s.weight} кг" if s.weight is not None else "свой вес"
-    return (
+    text = (
         f"<b>{ex.name}</b>\n"
-        f"Цель: {ex.sets}×{s.reps}, {weight} ({s.note})\n"
+        f"Цель: {ex.sets}×{s.reps}, {_fmt_w(s.weight)} ({s.note})\n"
         f"Отдых: {ex.rest_sec} сек"
     )
+    return text, kb.log_kb(ex.key, s.weight)
 
 
 @router.message(Command("today"))
@@ -37,9 +36,9 @@ async def cmd_today(message: Message, session: AsyncSession, user: User):
         await message.answer("Программы пока нет. Набери /start, соберём её.")
         return
 
-    day = workout_for_today(program, _today_weekday())
+    day = workout_for_today(program, weekday_local())
     if day is None:
-        nxt = next_workout(program, _today_weekday())
+        nxt = next_workout(program, weekday_local())
         if nxt:
             await message.answer(
                 f"Сегодня день отдыха 😌 Ближайшая тренировка: <b>{nxt.title}</b>."
@@ -50,10 +49,8 @@ async def cmd_today(message: Message, session: AsyncSession, user: User):
 
     await message.answer(f"🏋️ Сегодня: <b>{day.title}</b>")
     for ex in day.exercises:
-        await message.answer(
-            await _exercise_card(session, user.id, ex),
-            reply_markup=kb.log_kb(ex.key),
-        )
+        text, markup = await _card_and_kb(session, user.id, ex)
+        await message.answer(text, reply_markup=markup)
 
 
 def _find_exercise(program, key):
@@ -66,7 +63,9 @@ def _find_exercise(program, key):
 
 @router.callback_query(F.data.startswith("log:"))
 async def on_log(cb: CallbackQuery, session: AsyncSession, user: User):
-    _, key, action = cb.data.split(":")
+    _, key, action, wstr = cb.data.split(":", 3)
+    weight = None if wstr == "none" else float(wstr)
+
     program = await repo.get_active_program(session, user.id)
     ex = _find_exercise(program, key) if program else None
     if ex is None:
@@ -74,8 +73,7 @@ async def on_log(cb: CallbackQuery, session: AsyncSession, user: User):
         return
 
     last = await repo.last_log(session, user.id, key)
-    s = suggest(last, ex)
-    weight = s.weight
+    reps = suggest(last, ex).reps
 
     if action == "skip":
         await repo.add_log(session, user.id, key, done=False, data=LogData(weight=weight, reps=0))
@@ -90,19 +88,16 @@ async def on_log(cb: CallbackQuery, session: AsyncSession, user: User):
 
     if action in ("wup", "wdown"):
         await cb.message.edit_text(
-            f"<b>{ex.name}</b>\nЦель: {ex.sets}×{s.reps}, "
-            f"{(str(weight) + ' кг') if weight is not None else 'свой вес'}",
-            reply_markup=kb.log_kb(key),
+            f"<b>{ex.name}</b>\nЦель: {ex.sets}×{reps}, {_fmt_w(weight)}",
+            reply_markup=kb.log_kb(key, weight),
         )
         await cb.answer("Вес обновлён")
         return
 
+    # action == "done" — log the (possibly adjusted) weight
     await repo.add_log(
         session, user.id, key, done=True,
-        data=LogData(weight=weight, reps=s.reps, rpe=7),
+        data=LogData(weight=weight, reps=reps, rpe=7),
     )
-    await cb.message.edit_text(
-        f"✅ {ex.name} — записал: "
-        f"{(str(weight) + ' кг') if weight is not None else 'свой вес'} × {s.reps}"
-    )
+    await cb.message.edit_text(f"✅ {ex.name} — записал: {_fmt_w(weight)} × {reps}")
     await cb.answer("Записал 💪")

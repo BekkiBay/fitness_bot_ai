@@ -48,11 +48,12 @@ def skip_injuries_kb() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def log_kb(exercise_key: str) -> InlineKeyboardMarkup:
+def log_kb(exercise_key: str, weight: float | None = None) -> InlineKeyboardMarkup:
+    w = "none" if weight is None else str(weight)
     b = InlineKeyboardBuilder()
-    b.button(text="✅ Сделал", callback_data=f"log:{exercise_key}:done")
-    b.button(text="➖ вес", callback_data=f"log:{exercise_key}:wdown")
-    b.button(text="➕ вес", callback_data=f"log:{exercise_key}:wup")
-    b.button(text="⏭️ Пропустить", callback_data=f"log:{exercise_key}:skip")
+    b.button(text="✅ Сделал", callback_data=f"log:{exercise_key}:done:{w}")
+    b.button(text="➖ вес", callback_data=f"log:{exercise_key}:wdown:{w}")
+    b.button(text="➕ вес", callback_data=f"log:{exercise_key}:wup:{w}")
+    b.button(text="⏭️ Пропустить", callback_data=f"log:{exercise_key}:skip:{w}")
     b.adjust(1, 2, 1)
     return b.as_markup()

@@ -60,6 +60,7 @@ class CodexProvider:
 
     async def answer_question(self, question: str, memory: Memory) -> str:
         try:
-            return (await self._run(prompts.qa_prompt(question, memory))).strip()
+            raw = (await self._run(prompts.qa_prompt(question, memory))).strip()
+            return f"{raw}\n\n{prompts.DISCLAIMER}"
         except Exception:
             return await self._fallback.answer_question(question, memory)

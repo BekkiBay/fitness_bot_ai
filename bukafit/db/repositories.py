@@ -64,7 +64,11 @@ async def last_log(
 ) -> LogData | None:
     row = await session.scalar(
         select(WorkoutLog)
-        .where(WorkoutLog.user_id == user_id, WorkoutLog.exercise_key == exercise_key)
+        .where(
+            WorkoutLog.user_id == user_id,
+            WorkoutLog.exercise_key == exercise_key,
+            WorkoutLog.done.is_(True),
+        )
         .order_by(WorkoutLog.created_at.desc(), WorkoutLog.id.desc())
         .limit(1)
     )

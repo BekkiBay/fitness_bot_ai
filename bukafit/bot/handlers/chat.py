@@ -1,5 +1,6 @@
 from aiogram import F, Router
 from aiogram.enums import ChatAction
+from aiogram.filters import StateFilter
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,7 +11,7 @@ from bukafit.core.models import User
 router = Router()
 
 
-@router.message(F.text & ~F.text.startswith("/"))
+@router.message(StateFilter(None), F.text & ~F.text.startswith("/"))
 async def on_text(
     message: Message, session: AsyncSession, user: User, provider: ModelProvider
 ):

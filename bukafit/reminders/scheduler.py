@@ -5,6 +5,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
 from bukafit.config import settings
+from bukafit.core.clock import weekday_local
 from bukafit.core.models import User
 from bukafit.core.schedule import workout_for_today
 from bukafit.db import repositories as repo
@@ -13,15 +14,10 @@ from bukafit.db.session import SessionMaker
 log = logging.getLogger(__name__)
 
 
-def _today_weekday() -> int:
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).isoweekday()
-
-
 async def morning_plan(bot: Bot) -> None:
     async with SessionMaker() as session:
         users = (await session.scalars(select(User))).all()
-        wd = _today_weekday()
+        wd = weekday_local()
         for user in users:
             program = await repo.get_active_program(session, user.id)
             if not program:

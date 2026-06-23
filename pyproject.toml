@@ -12,6 +12,7 @@ dependencies = [
     "APScheduler>=3.10",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
+    "tzdata",
 ]
 
 [project.optional-dependencies]
