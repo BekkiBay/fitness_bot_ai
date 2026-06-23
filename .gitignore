@@ -20,3 +20,4 @@ venv/
 # Data
 *.sqlite3
 *.db
+.claude
